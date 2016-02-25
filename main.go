@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"path/filepath"
 
 	"github.com/KeluDiao/gotube/api"
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2/google"
 	storage "google.golang.org/api/storage/v1"
+	"github.com/k0kubun/pp"
 )
 
 const (
@@ -26,6 +28,7 @@ const (
 	extension = "video/mp4"
 
 	bucketName = "bucket-pre-hakone"
+	sec = "1"
 )
 
 var (
@@ -96,12 +99,11 @@ func storybords(c *gin.Context) {
 	// create thumbnails. should ffmpeg command install.
 	// exexc command. ffmpeg  -i ./TEST\ VIDEOvideo.mp4 -r 1 -f image2 frame%d.jpg
 	path := tmp + "/" + filename + "video" + ".mp4"
-	_, err = exec.Command("/usr/local/bin/ffmpeg", "-i", path, "-r", "1", "-f", "image2", tmp+"/%d.jpg").Output()
+	_, err = exec.Command("ffmpeg", "-i", path, "-r", sec, "-f", "image2", tmp+"/%d.jpg").Output()
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-
-	// TODO: defer ファイル削除
+	defer clean(tmp)
 
 	// getting local jpg files.
 	var jpgs []string
@@ -136,7 +138,7 @@ func storybords(c *gin.Context) {
 			log.Fatalf("%v", err)
 		}
 
-		// upload gcp
+		// upload google cloud storage.
 		if res, err := service.Objects.Insert(bucketName, object).Media(file).Do(); err == nil {
 			log.Printf("Created object %v at location %v\n\n", res.Name, res.SelfLink)
 		} else {
@@ -146,14 +148,37 @@ func storybords(c *gin.Context) {
 		responseThumbnails := &ThumbnailsResponse{
 			Sec: index + 1,
 			// https://storage.googleapis.com/{bucketName}/49d3d4c3-3167-41ae-61e2-57624a02363a/1.jpg
-			Thumbnail: "https://storage.googleapis.com/" + bucketName + fmt.Sprintf("%s", fmt.Sprint(uniqdir)) + "/" + thumbnail,
+			Thumbnail: "https://storage.googleapis.com/" + bucketName + "/" + fmt.Sprintf("%s", fmt.Sprint(uniqdir)) + "/" + thumbnail,
 		}
 		thumbs = append(thumbs, *responseThumbnails)
 	}
+
+	pp.Print(thumbs)
 
 	response := &Response{
 		Url:        url,
 		Thumbnails: &thumbs,
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func clean(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		err = os.RemoveAll(filepath.Join(dir, name))
+		pp.Print(name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
